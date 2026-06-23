@@ -404,6 +404,169 @@ run_io_demo() {
 }
 
 #
+# Tail and parse ucx_perftest stdout to extract current throughput
+# 
+# Requires ucx_perftest be run with "-v" to generate output in the following form: 
+# [thread 0]273598,21.660,21.940,21.930,45578.82,45599.20,45579,45599
+#
+get_perftest_throughput() {
+    file=$1
+    timeout_seconds=$2
+    samples=$3
+    sum=0
+    count=0
+    start_time=$(date +%s)
+
+    tail -n 0 -F -- "$file" 2>/dev/null |
+    while IFS= read -r line;
+	do
+        current_time=$(date +%s)
+        elapsed_time=$((current_time - start_time))
+
+        if (( elapsed_time >= timeout_seconds ));
+		then
+			echo "0"
+            return 0 
+        fi
+
+        [[ $line == \[thread* ]] || continue
+
+        throughput=$(awk -F',' '{ print int($5) }' <<< "$line")
+
+        sum=$((sum + throughput))
+        count=$((count + 1))
+
+        if (( count == samples ));
+		then
+            echo $((sum / count))
+            return 0
+        fi
+    done
+}
+
+#
+# Cleanup processes running in background 
+#
+kill_background_processes() {
+    for pid in "$@"
+    do
+        kill -9 "${pid}" || true
+    done
+}
+
+#
+# Fault Tolerance Test using ucx_perftest
+#
+run_ucx_perftest_fault_tolerance() {
+
+	if [[ $(uname -m) != "x86_64" ]]; then
+		echo "==== Skip UCX Perftest Fault Tolerance Test on $(uname -m) ===="
+		return 0
+	fi
+
+	echo "==== Running UCX Perftest Fault Tolerance Test ===="
+
+	test_exe="${ucx_inst}/bin/ucx_perftest"
+	# Temporary location for drop tool
+	drop_tool="/hpc/scrap/fault_tolerance/ucx_drop_tool"
+	output_file=ucx_perftest_ft.stdout
+	samples=10
+	verify_timeout=20
+	settle_seconds=10
+	drop_ratio=95
+	sl=4
+	tc=31
+	devices=$(get_active_ib_devnames)
+	device_cnt=$(echo ${devices} | wc -w)
+	background_pids=()
+	block_cnt=0
+
+	if [[ -x "${drop_tool}" ]];
+	then
+		echo "Error: Could not find drop tool at ${drop_tool}"
+		return 1
+	fi
+
+	if [[ "${devices}" == "" ]];
+	then
+		echo "Error: No IB devices detected"
+		return 1
+	fi
+
+	export UCX_IB_SL=${sl}
+	export UCX_IB_TRAFFIC_CLASS=${tc}
+	export UCX_PROTO_INFO=y
+	export UCX_RC_MLX5_RETRY_COUNT=2
+	export UCX_IB_NUM_PATHS=1
+	export UCX_NET_DEVICES=$(get_active_ib_devnames | paste -sd,)
+	export UCX_MAX_RMA_RAILS=${device_cnt}
+	export UCX_TLS=rc_x 
+
+	args="-t ucp_put_bw     \
+		-n 1000000000000000 \
+		-s 1048576          \
+		-c 1                \
+		-e failover         \
+		-l                  \
+		-v"
+
+	${test_exe} ${args} > ${output_file} &
+	background_pids+=($!)
+
+	sleep ${settle_seconds} 
+
+	curr_tput=$(get_perftest_throughput ${output_file} ${verify_timeout} ${samples})
+	echo "Baseline throughput: ${curr_tput}"
+	prev_tput=${curr_tput}
+
+	# Loop through active IB devices. Block each one in turn and verify traffic
+	# continues to flow at reduced rate.
+	for dev in $(get_active_ib_devnames)
+	do
+		echo "Blocking traffic with service level ${sl} or traffic class ${tc} on device ${dev}..."
+		${drop_tool} -d ${dev} --sl ${sl} --tc ${tc} &
+		background_pids+=($!)
+		block_cnt=$((block_cnt + 1))
+
+		sleep ${settle_seconds}
+
+ 		threshold=$((prev_tput * drop_ratio / 100))
+   		curr_tput=$(get_perftest_throughput ${output_file} ${verify_timeout} ${samples})
+
+		if (( block_cnt < device_cnt ));
+		then
+			if (( curr_tput <= 0 || curr_tput > threshold ));
+			then
+  	     		echo "Error: throughput not in expected range after blocking ${dev}, tput=${curr_tput}, threshold=${threshold}"
+  		      	kill_background_processes "${background_pids[@]}"
+  	   	   		return 1
+    		fi
+    		prev_tput=${curr_tput}
+		fi
+	done
+
+	if (( curr_tput != 0 ));
+	then
+		echo "Error: traffic still flowing when all are devices blocked!"
+		kill_background_processes "${background_pids[@]}"
+		return 1
+	fi
+
+	kill_background_processes "${background_pids[@]}"
+
+	unset UCX_IB_SL
+	unset UCX_IB_TRAFFIC_CLASS
+	unset UCX_PROTO_INFO
+	unset UCX_RC_MLX5_RETRY_COUNT
+	unset UCX_IB_NUM_PATHS
+	unset UCX_NET_DEVICES
+	unset UCX_MAX_RMA_RAILS
+	unset UCX_TLS
+
+	return 0
+}
+
+#
 # Run UCX performance test
 # Note: If requested running with MPI, MPI has to be initialized before
 # The function accepts 0 (default value) or 1 that means launching w/ or w/o MPI
@@ -550,7 +713,7 @@ run_ucx_perftest() {
 		run_client_server_app "$ucx_perftest" "$ucp_test_args" "$(hostname)" 0 0
 
 		# Run AMO tests
-		echo -e "4 -s 4\n8 -s 8" > "$ucx_inst_ptest/msg_atomic"
+		echo -e peer "4 -s 4\n8 -s 8" > "$ucx_inst_ptest/msg_atomic"
 		ucp_test_args_atomic="-b $ucx_inst_ptest/test_types_ucp_amo \
 			              -b $ucx_inst_ptest/msg_atomic \
 				      -n 1000 -w 1"
@@ -1241,6 +1404,9 @@ run_configure_tests() {
 run_tests() {
 	export UCX_PROTO_REQUEST_RESET=y
 
+	# temp debug to find drop tool binary...
+	ls /hpc/scrap/fault_tolerance/ || true
+
 	# all are running mpi tests
 	run_mpi_tests
 
@@ -1280,6 +1446,9 @@ run_tests() {
 
 	# nt_buffer_transfer tests
 	do_distributed_task 0 4 run_nt_buffer_transfer_tests
+
+	# fault tolerance tests
+	do_distributed_task 1 4 run_ucx_perftest_fault_tolerance
 }
 
 run_asan_check() {

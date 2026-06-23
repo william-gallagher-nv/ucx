@@ -267,6 +267,16 @@ get_active_ib_devices() {
 }
 
 #
+# Get active IB device names without port suffix
+#
+get_active_ib_devnames() {
+	for ibdev_port in $(get_active_ib_devices)
+	do
+		echo "${ibdev_port%:*}"
+	done | sort -u
+}
+
+#
 # Filter in BlueField IB devices from the device list
 #
 get_ib_bf_devices() {
