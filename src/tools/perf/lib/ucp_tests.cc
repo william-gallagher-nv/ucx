@@ -7,6 +7,11 @@
 * See file LICENSE for terms.
 */
 
+#include "tools/perf/api/libperf.h"
+#include "ucp/api/ucp.h"
+#include "ucs/type/status.h"
+#include <cstdint>
+#include <fcntl.h>
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
@@ -14,10 +19,12 @@
 #include "libperf_int.h"
 #include "ucp_tests.h"
 
+#include <ucs/algorithm/crc.h>
 #include <ucs/sys/preprocessor.h>
 #include <ucs/sys/string.h>
 #include <limits>
 
+static const char urandom_path[] = "/dev/urandom";
 
 template <ucx_perf_cmd_t CMD, ucx_perf_test_type_t TYPE, unsigned FLAGS>
 class ucp_perf_test_runner : public ucp_perf_test_runner_base<uint8_t> {
@@ -249,6 +256,7 @@ public:
             !(m_perf.params.flags & UCX_PERF_TEST_FLAG_ONE_SIDED))
         {
             progress();
+
         }
     }
 
@@ -439,6 +447,7 @@ public:
         uint64_t value             = 0;
         void *request;
         ucs_status_t status;
+        param->op_attr_mask |= UCP_OP_ATTR_FLAG_NO_IMM_CMPL; 
 
         wait_send_window(1);
 
@@ -733,6 +742,44 @@ public:
                  m_perf.ucp.self_recv_rkey);
     }
 
+    ucs_status_t init_urandom_fd(int *fd)
+    {
+        int local_fd = open(urandom_path, O_RDONLY);
+        if (local_fd < 0) {
+            ucs_error("could not open %s: %m", urandom_path);
+            return UCS_ERR_IO_ERROR;
+        }
+        *fd = local_fd;
+        return UCS_OK;
+    }
+
+    ucs_status_t UCS_F_ALWAYS_INLINE fill_buffer_random(void *buffer,
+                                             size_t buffer_length, int fd)
+    {
+        if (read(fd, buffer, buffer_length) < buffer_length) {
+            ucs_error("failed to fill buffer with random bytes");
+            return UCS_ERR_IO_ERROR;
+        }
+        return UCS_OK;
+    }
+
+    ucs_status_t UCS_F_ALWAYS_INLINE validate_buffers(void *send_buffer, void *recv_buffer,
+                                        size_t length) {
+
+        if (memcmp(send_buffer, recv_buffer, length)) {
+            ucs_error("send and receive buffers do not have the same payloads");
+            uint8_t *send = (uint8_t *) send_buffer;
+            uint8_t *recv = (uint8_t *) recv_buffer;
+            for (size_t i = length; i >= 0; i--) {
+                if (send[i] != recv[i]) {
+                    printf("diffence at position %lu\n", i);
+                }
+            }
+            return UCS_ERR_NO_MESSAGE;
+        }
+        return UCS_OK;
+    }
+
     ucs_status_t run_pingpong()
     {
         unsigned my_index;
@@ -744,6 +791,8 @@ public:
         ucp_rkey_h rkey;
         size_t length, send_length, recv_length;
         psn_t sn;
+        int fd = -1;
+        ucs_status_t status;
 
         send_buffer = m_perf.send_buffer;
         recv_buffer = m_perf.recv_buffer;
@@ -759,6 +808,13 @@ public:
 
         reset_buffers(length, UNKNOWN_SN);
 
+        if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
+            status = init_urandom_fd(&fd);
+            if (status != UCS_OK) {
+                return status; 
+            }
+        }
+
         ucp_perf_barrier(&m_perf);
 
         my_index = rte_call(&m_perf, group_index);
@@ -769,16 +825,36 @@ public:
 
         if (my_index == 0) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
+
+                if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
+                    status = fill_buffer_random(send_buffer, send_length, fd);
+                    if (status != UCS_OK) {
+                        return status;
+                    }
+                }
+
                 send(ep, send_buffer, send_length, send_datatype, sn, remote_addr, rkey);
                 recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
                 wait_recv_window(m_max_outstanding);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
+
+                if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
+                    status = validate_buffers(send_buffer, recv_buffer, send_length);
+                    if (status != UCS_OK) {
+                        return status;
+                    }
+                }
             }
         } else if (my_index == 1) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
                 recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
                 wait_recv_window(m_max_outstanding);
+                
+                if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
+                    memcpy(send_buffer, recv_buffer, send_length);
+                }
+
                 send(ep, send_buffer, send_length, send_datatype, sn,
                      remote_addr, rkey, m_perf.current.iters == 0);
                 ucx_perf_update(&m_perf, 1, 1, length);
@@ -794,6 +870,11 @@ public:
 
         ucx_perf_get_time(&m_perf);
         ucp_perf_barrier(&m_perf);
+
+        if (fd >= 0) {
+            close(fd);
+        }
+
         return UCS_OK;
     }
 
@@ -833,9 +914,11 @@ public:
 
         if (m_perf.params.flags & UCX_PERF_TEST_FLAG_LOOPBACK) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
+
                 send(ep, send_buffer, send_length, send_datatype,
                      sn, remote_addr, rkey);
                 recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
+                    
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
