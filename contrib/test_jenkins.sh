@@ -481,7 +481,7 @@ run_ucx_perftest_fault_tolerance() {
 	background_pids=()
 	block_cnt=0
 
-	if [[ -x "${drop_tool}" ]];
+	if [[ ! -x "${drop_tool}" ]];
 	then
 		echo "Error: Could not find drop tool at ${drop_tool}"
 		return 1
