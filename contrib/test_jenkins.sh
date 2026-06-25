@@ -489,8 +489,8 @@ run_ucx_perftest_fault_tolerance() {
 
 	if [[ "${devices}" == "" ]];
 	then
-		echo "Error: No IB devices detected"
-		return 1
+		echo "No IB devices detected. Skipping Fault Tolerance test"
+		return 0 
 	fi
 
 	export UCX_IB_SL=${sl}
@@ -510,7 +510,7 @@ run_ucx_perftest_fault_tolerance() {
 		-l                  \
 		-v"
 
-	${test_exe} ${args} > ${output_file} &
+	${test_exe} ${args} 2>&1 | tee ${output_file} &
 	background_pids+=($!)
 
 	sleep ${settle_seconds} 
