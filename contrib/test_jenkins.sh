@@ -524,7 +524,7 @@ run_ucx_perftest_fault_tolerance() {
 	for dev in $(get_active_ib_devnames)
 	do
 		echo "Blocking traffic with service level ${sl} or traffic class ${tc} on device ${dev}..."
-		${drop_tool} -d ${dev} --sl ${sl} --tc ${tc} &
+		${drop_tool} -d ${dev} -s ${sl} -t ${tc} &
 		background_pids+=($!)
 		block_cnt=$((block_cnt + 1))
 
