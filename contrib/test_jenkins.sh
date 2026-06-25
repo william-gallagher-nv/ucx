@@ -495,6 +495,8 @@ run_ucx_perftest_fault_tolerance() {
 
 	export UCX_IB_SL=${sl}
 	export UCX_IB_TRAFFIC_CLASS=${tc}
+	export UCX_ZCOPY_THRESH=0
+	export UCX_MIN_RMA_CHUNK_SIZE=64
 	export UCX_PROTO_INFO=y
 	export UCX_RC_MLX5_RETRY_COUNT=2
 	export UCX_IB_NUM_PATHS=1
@@ -504,7 +506,7 @@ run_ucx_perftest_fault_tolerance() {
 
 	args="-t ucp_put_bw     \
 		-n 1000000000000000 \
-		-s 1048576          \
+		-s 1024             \
 		-c 1                \
 		-e failover         \
 		-l                  \
@@ -556,6 +558,8 @@ run_ucx_perftest_fault_tolerance() {
 
 	unset UCX_IB_SL
 	unset UCX_IB_TRAFFIC_CLASS
+	unset UCX_ZCOPY_THRESH
+	unset UCX_MIN_RMA_CHUNK_SIZE
 	unset UCX_PROTO_INFO
 	unset UCX_RC_MLX5_RETRY_COUNT
 	unset UCX_IB_NUM_PATHS
