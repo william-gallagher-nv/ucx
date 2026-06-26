@@ -440,7 +440,7 @@ public:
 
     ucs_status_t UCS_F_ALWAYS_INLINE
     send(ucp_ep_h ep, void *buffer, size_t length, ucp_datatype_t datatype,
-         psn_t sn, uint64_t remote_addr, ucp_rkey_h rkey, bool get_info = false)
+         psn_t sn, uint64_t remote_addr, ucp_rkey_h rkey, bool validate, bool get_info = false)
     {
         ucp_request_param_t *param = get_info ? &m_send_get_info_params :
                                                 &m_send_params;
@@ -478,7 +478,7 @@ public:
             case UCX_PERF_TEST_TYPE_PINGPONG:
             case UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM:
                 write_sn(buffer, m_perf.params.send_mem_type, length, sn,
-                         m_perf.ucp.self_send_rkey);
+                         m_perf.ucp.self_send_rkey, validate);
                 break;
             case UCX_PERF_TEST_TYPE_STREAM_UNI:
                 break;
@@ -520,7 +520,7 @@ public:
 
     ucs_status_t UCS_F_ALWAYS_INLINE
     recv(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t length,
-         ucp_datatype_t datatype, psn_t sn)
+         ucp_datatype_t datatype, psn_t sn, bool validate)
     {
         void *request;
         void *ptr;
@@ -550,13 +550,13 @@ public:
             /* coverity[switch_selector_expr_is_constant] */
             switch (TYPE) {
             case UCX_PERF_TEST_TYPE_PINGPONG:
-                while (read_sn(buffer, length) != sn) {
+                while (!read_sn(buffer, length, sn, validate)) {
                     progress_responder();
                 }
                 return UCS_OK;
             case UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM:
                 ptr = sn_ptr(buffer, length);
-                while (read_sn(buffer, length) != sn) {
+                while (!read_sn(buffer, length, sn, validate)) {
                     ucp_worker_wait_mem(worker, ptr);
                     progress_responder();
                 }
@@ -596,7 +596,7 @@ public:
     void wait_last_iter(void *buffer, size_t size)
     {
         if (use_psn()) {
-            while (read_sn(buffer, size) != LAST_ITER_SN) {
+            while (!read_sn(buffer, size, LAST_ITER_SN, false)) {
                 progress_responder();
             }
         }
@@ -621,11 +621,11 @@ public:
            the remote buffer */
         if (CMD == UCX_PERF_CMD_PUT) {
             write_sn(buffer, m_perf.params.send_mem_type, size, LAST_ITER_SN,
-                     m_perf.ucp.self_send_rkey);
+                     m_perf.ucp.self_send_rkey, false);
         } else if (is_atomic()) {
             atomic_value = 0;
             write_sn(&atomic_value, UCS_MEMORY_TYPE_HOST, size, LAST_ITER_SN,
-                     NULL);
+                     NULL, false);
             atomic_param.op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE |
                                         UCP_OP_ATTR_FIELD_CALLBACK |
                                         UCP_OP_ATTR_FIELD_USER_DATA;
@@ -690,7 +690,7 @@ public:
         }
 
         send(m_perf.ucp.ep, buffer, 1, datatype, 0, m_perf.ucp.remote_addr,
-             m_perf.ucp.rkey, false);
+             m_perf.ucp.rkey, false, false);
         wait_send_window(m_max_outstanding);
     }
 
@@ -700,7 +700,7 @@ public:
             return;
         }
 
-        recv(m_perf.ucp.worker, m_perf.ucp.ep, buffer, 1, datatype, 0);
+        recv(m_perf.ucp.worker, m_perf.ucp.ep, buffer, 1, datatype, 0, false);
         wait_recv_window(m_max_outstanding);
     }
 
@@ -737,9 +737,9 @@ public:
         }
 
         write_sn(m_perf.send_buffer, m_perf.params.send_mem_type, length, sn,
-                 m_perf.ucp.self_send_rkey);
+                 m_perf.ucp.self_send_rkey, false);
         write_sn(m_perf.recv_buffer, m_perf.params.recv_mem_type, length, sn,
-                 m_perf.ucp.self_recv_rkey);
+                 m_perf.ucp.self_recv_rkey, false);
     }
 
     ucs_status_t init_urandom_fd(int *fd)
@@ -791,8 +791,9 @@ public:
         ucp_rkey_h rkey;
         size_t length, send_length, recv_length;
         psn_t sn;
-        int fd = -1;
-        ucs_status_t status;
+        //int fd = -1;
+        //ucs_status_t status;
+        bool validate;
 
         send_buffer = m_perf.send_buffer;
         recv_buffer = m_perf.recv_buffer;
@@ -800,7 +801,7 @@ public:
         ep          = m_perf.ucp.ep;
         remote_addr = m_perf.ucp.remote_addr;
         rkey        = m_perf.ucp.rkey;
-        sn          = 0;
+        sn          = 1;
 
         ucp_perf_init_common_params(&length, &send_length, &send_datatype,
                                     &send_buffer, &recv_length, &recv_datatype,
@@ -808,12 +809,14 @@ public:
 
         reset_buffers(length, UNKNOWN_SN);
 
-        if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
-            status = init_urandom_fd(&fd);
-            if (status != UCS_OK) {
-                return status; 
-            }
-        }
+        //if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
+        //    status = init_urandom_fd(&fd);
+        //    if (status != UCS_OK) {
+        //        return status; 
+        //    }
+        //}
+
+        validate = m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE;
 
         ucp_perf_barrier(&m_perf);
 
@@ -826,37 +829,37 @@ public:
         if (my_index == 0) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
 
-                if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
-                    status = fill_buffer_random(send_buffer, send_length, fd);
-                    if (status != UCS_OK) {
-                        return status;
-                    }
-                }
+                //if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
+                //    status = fill_buffer_random(send_buffer, send_length, fd);
+                //    if (status != UCS_OK) {
+                //        return status;
+                //    }
+                //}
 
-                send(ep, send_buffer, send_length, send_datatype, sn, remote_addr, rkey);
-                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
+                send(ep, send_buffer, send_length, send_datatype, sn, remote_addr, rkey, validate, false);
+                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn, validate);
                 wait_recv_window(m_max_outstanding);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
 
-                if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
-                    status = validate_buffers(send_buffer, recv_buffer, send_length);
-                    if (status != UCS_OK) {
-                        return status;
-                    }
-                }
+                //if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
+                //    status = validate_buffers(send_buffer, recv_buffer, send_length);
+                //    if (status != UCS_OK) {
+                //        return status;
+                //    }
+                //}
             }
         } else if (my_index == 1) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
+                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn, validate);
                 wait_recv_window(m_max_outstanding);
                 
-                if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
-                    memcpy(send_buffer, recv_buffer, send_length);
-                }
+                //if (m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE) {
+                //    memcpy(send_buffer, recv_buffer, send_length);
+                //}
 
                 send(ep, send_buffer, send_length, send_datatype, sn,
-                     remote_addr, rkey, m_perf.current.iters == 0);
+                     remote_addr, rkey, validate, m_perf.current.iters == 0);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
@@ -871,9 +874,9 @@ public:
         ucx_perf_get_time(&m_perf);
         ucp_perf_barrier(&m_perf);
 
-        if (fd >= 0) {
-            close(fd);
-        }
+        //if (fd >= 0) {
+        //    close(fd);
+        //}
 
         return UCS_OK;
     }
@@ -914,11 +917,9 @@ public:
 
         if (m_perf.params.flags & UCX_PERF_TEST_FLAG_LOOPBACK) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-
                 send(ep, send_buffer, send_length, send_datatype,
-                     sn, remote_addr, rkey);
-                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
-                    
+                     sn, remote_addr, rkey, false);
+                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn, false);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
@@ -927,11 +928,10 @@ public:
             wait_recv_window(m_max_outstanding);
         } else if (my_index == 0) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
+                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn, false);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
-
             wait_last_iter(recv_buffer, send_length);
             wait_recv_window(m_max_outstanding);
             send_ack(send_buffer, send_datatype);
@@ -940,7 +940,7 @@ public:
             m_am_rx_length = 1;
             UCX_PERF_TEST_FOREACH(&m_perf) {
                 send(ep, send_buffer, send_length, send_datatype, sn,
-                     remote_addr, rkey, m_perf.current.iters == 0);
+                     remote_addr, rkey, false, m_perf.current.iters == 0);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }

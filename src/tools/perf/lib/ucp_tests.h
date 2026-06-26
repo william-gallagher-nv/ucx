@@ -60,36 +60,49 @@ public:
         return host_sn;
     }
 
-    UCS_F_ALWAYS_INLINE PSN read_sn(void *buffer, size_t length)
+    UCS_F_ALWAYS_INLINE bool buffer_all(const char *buf, size_t len, char c) {
+        return buf[0] == c && memcmp(buf, buf + 1, len - 1) == 0;
+    }
+
+    UCS_F_ALWAYS_INLINE bool read_sn(void *buffer, size_t length, PSN sn, bool validate)
     {
         ucs_memory_type_t mem_type = m_perf.params.recv_mem_type;
         const PSN *ptr             = sn_ptr(buffer, length);
         ucp_request_param_t param  = {0};
         ucs_status_ptr_t request;
-        PSN sn;
+        PSN read_sn;
 
         if (mem_type == UCS_MEMORY_TYPE_HOST) {
-            return *(const volatile PSN*)ptr;
+            if (validate) {
+                return buffer_all((const char *) buffer, length, (char) sn);
+            } else {
+                read_sn = *(const volatile PSN*)ptr;
+                return (read_sn == sn);
+            }
         } else {
-            request = ucp_get_nbx(m_perf.ucp.self_ep, &sn, sizeof(sn),
+            request = ucp_get_nbx(m_perf.ucp.self_ep, &read_sn, sizeof(read_sn),
                                   (uint64_t)ptr, m_perf.ucp.self_recv_rkey,
                                   &param);
             request_wait(request, mem_type, "read_sn");
             request = ucp_ep_flush_nbx(m_perf.ucp.self_ep, &param);
             request_wait(request, mem_type, "flush read_sn");
-            return sn;
+            return (read_sn == sn);
         }
     }
 
     UCS_F_ALWAYS_INLINE void write_sn(void *buffer, ucs_memory_type_t mem_type,
-                                      size_t length, PSN sn, ucp_rkey_h rkey)
+                                      size_t length, PSN sn, ucp_rkey_h rkey, bool validate)
     {
         PSN *ptr                  = sn_ptr(buffer, length);
         ucp_request_param_t param = {0};
         ucs_status_ptr_t request;
 
         if (mem_type == UCS_MEMORY_TYPE_HOST) {
-            *(volatile PSN*)ptr = sn;
+            if (validate) {
+                memset(buffer, sn, length);
+            } else {
+                *(volatile PSN*)ptr = sn;
+            }
         } else {
             request = ucp_put_nbx(m_perf.ucp.self_ep, &sn, sizeof(sn),
                                   (uint64_t)ptr, rkey, &param);
