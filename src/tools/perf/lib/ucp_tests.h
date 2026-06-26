@@ -60,11 +60,21 @@ public:
         return host_sn;
     }
 
-    UCS_F_ALWAYS_INLINE bool buffer_all(const char *buf, size_t len, char c) {
-        return buf[0] == c && memcmp(buf, buf + 1, len - 1) == 0;
+    UCS_F_ALWAYS_INLINE bool
+    check_full_buffer(const char *buffer, size_t length, char c)
+    {
+        if (length == 1) {
+            return (buffer[0] == c);
+        }
+        if ((buffer[0] == c) &&
+           (memcmp(buffer, &buffer[1], length - 1) == 0)) {
+            return true;
+        };
+        return false;
     }
 
-    UCS_F_ALWAYS_INLINE bool read_sn(void *buffer, size_t length, PSN sn, bool validate)
+    UCS_F_ALWAYS_INLINE bool
+    check_sn(void *buffer, size_t length, PSN sn, bool full_buffer)
     {
         ucs_memory_type_t mem_type = m_perf.params.recv_mem_type;
         const PSN *ptr             = sn_ptr(buffer, length);
@@ -73,8 +83,9 @@ public:
         PSN read_sn;
 
         if (mem_type == UCS_MEMORY_TYPE_HOST) {
-            if (validate) {
-                return buffer_all((const char *) buffer, length, (char) sn);
+            if (full_buffer) {
+                return check_full_buffer(reinterpret_cast<const char*>(buffer),
+                                         length, (char) sn);
             } else {
                 read_sn = *(const volatile PSN*)ptr;
                 return (read_sn == sn);
@@ -91,14 +102,15 @@ public:
     }
 
     UCS_F_ALWAYS_INLINE void write_sn(void *buffer, ucs_memory_type_t mem_type,
-                                      size_t length, PSN sn, ucp_rkey_h rkey, bool validate)
+                                      size_t length, PSN sn, ucp_rkey_h rkey,
+                                      bool full_buffer)
     {
         PSN *ptr                  = sn_ptr(buffer, length);
         ucp_request_param_t param = {0};
         ucs_status_ptr_t request;
 
         if (mem_type == UCS_MEMORY_TYPE_HOST) {
-            if (validate) {
+            if (full_buffer) {
                 memset(buffer, sn, length);
             } else {
                 *(volatile PSN*)ptr = sn;
