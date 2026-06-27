@@ -544,15 +544,24 @@ public:
             /* coverity[switch_selector_expr_is_constant] */
             switch (TYPE) {
             case UCX_PERF_TEST_TYPE_PINGPONG:
-                while (!check_sn(buffer, length, sn, full_buffer)) {
+            case UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM:
+                /* Poll on the trailing SN only. Remote RDMA writes may not be
+                 * visible to non-volatile loads on the full buffer while the
+                 * transfer is in flight. */
+                ptr = sn_ptr(buffer, length);
+                while (!check_sn(buffer, length, sn, false)) {
+                    if (TYPE == UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM) {
+                        ucp_worker_wait_mem(worker, ptr);
+                    }
                     progress_responder();
                 }
-                return UCS_OK;
-            case UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM:
-                ptr = sn_ptr(buffer, length);
-                while (!check_sn(buffer, length, sn, full_buffer)) {
-                    ucp_worker_wait_mem(worker, ptr);
-                    progress_responder();
+                if (full_buffer) {
+                    fence();
+                    if (!check_sn(buffer, length, sn, true)) {
+                        ucs_error("data validation failed after PUT (sn=%u)",
+                                  sn);
+                        return UCS_ERR_IO_ERROR;
+                    }
                 }
                 return UCS_OK;
             case UCX_PERF_TEST_TYPE_STREAM_UNI:
@@ -748,9 +757,7 @@ public:
         size_t length, send_length, recv_length;
         psn_t sn;
         bool full_buffer;
-        //int temp_i = 0;
-        //uint8_t *snd;
-        //uint8_t *rcv;
+        ucs_status_t status;
 
         send_buffer = m_perf.send_buffer;
         recv_buffer = m_perf.recv_buffer;
@@ -778,39 +785,37 @@ public:
 
         if (my_index == 0) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-                //printf("%d\n", temp_i);
-                //temp_i++;
                 if (full_buffer) {
                     memset(send_buffer, sn, send_length);
                 }
                 send(ep, send_buffer, send_length, send_datatype, sn,
                      remote_addr, rkey, false);
-                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn,
-                     full_buffer);
+                status = recv(worker, ep, recv_buffer, recv_length,
+                              recv_datatype, sn, full_buffer);
+                if (status != UCS_OK) {
+                    return status;
+                }
 
                 wait_recv_window(m_max_outstanding);
-                if (full_buffer) {
-                    //snd = reinterpret_cast<uint8_t *>(send_buffer);
-                    //rcv = reinterpret_cast<uint8_t *>(recv_buffer);
-                    //for (int i = 0; i < send_length; i++) {
-                    //    printf("%u %u\n", snd[i], rcv[i]);
-                    //}
-                    if (memcmp(send_buffer, recv_buffer, send_length)) {
-                        ucs_error("mismatch between send and receive buffers");
-                        return UCS_ERR_IO_ERROR;
-                    }
+                if (full_buffer &&
+                    (m_perf.params.command != UCX_PERF_CMD_PUT) &&
+                    memcmp(send_buffer, recv_buffer, send_length)) {
+                    ucs_error("mismatch between send and receive buffers");
+                    return UCS_ERR_IO_ERROR;
                 }
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
         } else if (my_index == 1) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn,
-                     full_buffer);
+                status = recv(worker, ep, recv_buffer, recv_length,
+                              recv_datatype, sn, full_buffer);
+                if (status != UCS_OK) {
+                    return status;
+                }
                 wait_recv_window(m_max_outstanding);
 
                 if (full_buffer) {
-                    //memset(send_buffer, sn, send_length);
                     memcpy(send_buffer, recv_buffer, send_length);
                 }
 
@@ -824,8 +829,6 @@ public:
         wait_recv_window(m_max_outstanding);
         wait_send_window(m_max_outstanding);
         flush();
-
-        //ucp_perf_test_flush_workers(m_perf);
 
         ucx_perf_omp_barrier(&m_perf);
 

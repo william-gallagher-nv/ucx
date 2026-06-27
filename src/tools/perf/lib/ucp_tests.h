@@ -61,15 +61,17 @@ public:
     }
 
     UCS_F_ALWAYS_INLINE bool
-    check_full_buffer(const char *buffer, size_t length, char c)
+    check_full_buffer(const void *buffer, size_t length, char c)
     {
+        const volatile char *vbuf = reinterpret_cast<const volatile char*>(buffer);
+
         if (length == 1) {
-            return (buffer[0] == c);
+            return (vbuf[0] == c);
         }
-        if ((buffer[0] == c) &&
-           (memcmp(buffer, &buffer[1], length - 1) == 0)) {
+        if ((vbuf[0] == c) &&
+            (memcmp(const_cast<const char*>(vbuf), const_cast<const char*>(&vbuf[1]), length - 1) == 0)) {
             return true;
-        };
+        }
         return false;
     }
 
@@ -84,8 +86,7 @@ public:
 
         if (mem_type == UCS_MEMORY_TYPE_HOST) {
             if (full_buffer) {
-                return check_full_buffer(reinterpret_cast<const char*>(buffer),
-                                         length, (char) sn);
+                return check_full_buffer(buffer, length, (char)sn);
             } else {
                 read_sn = *(const volatile PSN*)ptr;
                 return (read_sn == sn);
