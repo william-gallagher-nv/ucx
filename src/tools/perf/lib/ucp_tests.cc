@@ -542,6 +542,10 @@ public:
             /* coverity[switch_selector_expr_is_constant] */
             switch (TYPE) {
             case UCX_PERF_TEST_TYPE_PINGPONG:
+                while (read_sn(buffer, length) != sn) {
+                    progress_responder();
+                }
+                return UCS_OK;
             case UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM:
                 ptr = sn_ptr(buffer, length);
                 while (read_sn(buffer, length) != sn) {
