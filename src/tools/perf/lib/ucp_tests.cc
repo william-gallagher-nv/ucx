@@ -543,14 +543,9 @@ public:
             switch (TYPE) {
             case UCX_PERF_TEST_TYPE_PINGPONG:
             case UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM:
-                /* Poll on the trailing SN only. Remote RDMA writes may not be
-                 * visible to non-volatile loads on the full buffer while the
-                 * transfer is in flight. */
                 ptr = sn_ptr(buffer, length);
                 while (read_sn(buffer, length) != sn) {
-                    if (TYPE == UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM) {
-                        ucp_worker_wait_mem(worker, ptr);
-                    }
+                    ucp_worker_wait_mem(worker, ptr);
                     progress_responder();
                 }
                 return UCS_OK;
@@ -840,7 +835,6 @@ public:
 
         ucx_perf_get_time(&m_perf);
         ucp_perf_barrier(&m_perf);
-
         return UCS_OK;
     }
 
@@ -880,8 +874,8 @@ public:
 
         if (m_perf.params.flags & UCX_PERF_TEST_FLAG_LOOPBACK) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-                send(ep, send_buffer, send_length, send_datatype, sn,
-                     remote_addr, rkey);
+                send(ep, send_buffer, send_length, send_datatype,
+                    sn, remote_addr, rkey);
                 recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
@@ -895,6 +889,7 @@ public:
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
+
             wait_last_iter(recv_buffer, send_length);
             wait_recv_window(m_max_outstanding);
             send_ack(send_buffer, send_datatype);
