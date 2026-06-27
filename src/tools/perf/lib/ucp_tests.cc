@@ -548,7 +548,7 @@ public:
                  * visible to non-volatile loads on the full buffer while the
                  * transfer is in flight. */
                 ptr = sn_ptr(buffer, length);
-                while (!check_sn(buffer, length, sn, false)) {
+                while (!read_sn(buffer, length)) {
                     if (TYPE == UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM) {
                         ucp_worker_wait_mem(worker, ptr);
                     }
@@ -590,7 +590,7 @@ public:
     void wait_last_iter(void *buffer, size_t size)
     {
         if (use_psn()) {
-            while (!check_sn(buffer, size, LAST_ITER_SN, false)) {
+            while (!read_sn(buffer, size)) {
                 progress_responder();
             }
         }
@@ -744,7 +744,7 @@ public:
         }
 
         if (memcmp(send_buffer, recv_buffer, length)) {
-            ucs_error("mismatch between send and receive buffers");
+            ucs_error("data mismatch between send and receive buffers");
             return UCS_ERR_IO_ERROR;
         }
 
@@ -762,7 +762,7 @@ public:
         ucp_rkey_h rkey;
         size_t length, send_length, recv_length;
         psn_t sn;
-        bool full_buffer;
+        bool validate;
         ucs_status_t status;
 
         send_buffer = m_perf.send_buffer;
@@ -779,7 +779,7 @@ public:
 
         reset_buffers(length, UNKNOWN_SN);
 
-        full_buffer = m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE;
+        validate = m_perf.params.flags & UCX_PERF_TEST_FLAG_VALIDATE;
 
         ucp_perf_barrier(&m_perf);
 
@@ -791,7 +791,7 @@ public:
 
         if (my_index == 0) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-                if (full_buffer) {
+                if (validate) {
                     memset(send_buffer, sn, send_length);
                 }
                 send(ep, send_buffer, send_length, send_datatype, sn,
@@ -803,7 +803,7 @@ public:
                 }
 
                 wait_recv_window(m_max_outstanding);
-                if (full_buffer) {
+                if (validate) {
                     status = validate_buffers(send_buffer, recv_buffer,
                                               send_length);
                     if (status != UCS_OK) {
@@ -822,7 +822,7 @@ public:
                 }
                 wait_recv_window(m_max_outstanding);
 
-                if (full_buffer) {
+                if (validate) {
                     memcpy(send_buffer, recv_buffer, send_length);
                 }
 
