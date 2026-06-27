@@ -794,8 +794,7 @@ public:
                     memset(send_buffer, sn, send_length);
                 }
 
-                send(ep, send_buffer, send_length, send_datatype, sn,
-                     remote_addr, rkey, false);
+                send(ep, send_buffer, send_length, send_datatype, sn, remote_addr, rkey);
                 recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
                 wait_recv_window(m_max_outstanding);
 
