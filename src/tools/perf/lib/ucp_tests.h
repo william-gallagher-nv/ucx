@@ -102,19 +102,18 @@ public:
     }
 
     UCS_F_ALWAYS_INLINE void write_sn(void *buffer, ucs_memory_type_t mem_type,
-                                      size_t length, PSN sn, ucp_rkey_h rkey,
-                                      bool full_buffer)
+                                      size_t length, PSN sn, ucp_rkey_h rkey)
     {
         PSN *ptr                  = sn_ptr(buffer, length);
         ucp_request_param_t param = {0};
         ucs_status_ptr_t request;
 
         if (mem_type == UCS_MEMORY_TYPE_HOST) {
-            if (full_buffer) {
-                memset(buffer, sn, length);
-            } else {
+            //if (full_buffer) {
+            //    memset(buffer, sn, length);
+            //} else {
                 *(volatile PSN*)ptr = sn;
-            }
+           // }
         } else {
             request = ucp_put_nbx(m_perf.ucp.self_ep, &sn, sizeof(sn),
                                   (uint64_t)ptr, rkey, &param);
