@@ -789,18 +789,16 @@ public:
 
         if (my_index == 0) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
+
                 if (validate) {
                     memset(send_buffer, sn, send_length);
                 }
+
                 send(ep, send_buffer, send_length, send_datatype, sn,
                      remote_addr, rkey, false);
-                status = recv(worker, ep, recv_buffer, recv_length,
-                              recv_datatype, sn);
-                if (status != UCS_OK) {
-                    return status;
-                }
-
+                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
                 wait_recv_window(m_max_outstanding);
+
                 if (validate) {
                     status = validate_buffers(send_buffer, recv_buffer,
                                               send_length);
@@ -808,16 +806,13 @@ public:
                         return status;
                     }
                 }
+
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
         } else if (my_index == 1) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-                status = recv(worker, ep, recv_buffer, recv_length,
-                              recv_datatype, sn);
-                if (status != UCS_OK) {
-                    return status;
-                }
+                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
                 wait_recv_window(m_max_outstanding);
 
                 if (validate) {
