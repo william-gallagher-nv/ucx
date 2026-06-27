@@ -513,8 +513,7 @@ public:
 
     ucs_status_t UCS_F_ALWAYS_INLINE recv(ucp_worker_h worker, ucp_ep_h ep,
                                           void *buffer, size_t length,
-                                          ucp_datatype_t datatype, psn_t sn,
-                                          bool full_buffer)
+                                          ucp_datatype_t datatype, psn_t sn)
     {
         void *request;
         void *ptr;
@@ -554,14 +553,6 @@ public:
                         ucp_worker_wait_mem(worker, ptr);
                     }
                     progress_responder();
-                }
-                if (full_buffer) {
-                    fence();
-                    if (!check_sn(buffer, length, sn, true)) {
-                        ucs_error("data validation failed after PUT (sn=%u)",
-                                  sn);
-                        return UCS_ERR_IO_ERROR;
-                    }
                 }
                 return UCS_OK;
             case UCX_PERF_TEST_TYPE_STREAM_UNI:
@@ -703,7 +694,7 @@ public:
             return;
         }
 
-        recv(m_perf.ucp.worker, m_perf.ucp.ep, buffer, 1, datatype, 0, false);
+        recv(m_perf.ucp.worker, m_perf.ucp.ep, buffer, 1, datatype, 0);
         wait_recv_window(m_max_outstanding);
     }
 
@@ -743,6 +734,21 @@ public:
                  m_perf.ucp.self_send_rkey);
         write_sn(m_perf.recv_buffer, m_perf.params.recv_mem_type, length, sn,
                  m_perf.ucp.self_recv_rkey);
+    }
+
+    ucs_status_t validate_buffers(void *send_buffer, void *recv_buffer,
+                                  size_t length)
+    {
+        if (CMD == UCX_PERF_CMD_PUT) {
+            fence();
+        }
+
+        if (memcmp(send_buffer, recv_buffer, length)) {
+            ucs_error("mismatch between send and receive buffers");
+            return UCS_ERR_IO_ERROR;
+        }
+
+        return UCS_OK;
     }
 
     ucs_status_t run_pingpong()
@@ -791,17 +797,18 @@ public:
                 send(ep, send_buffer, send_length, send_datatype, sn,
                      remote_addr, rkey, false);
                 status = recv(worker, ep, recv_buffer, recv_length,
-                              recv_datatype, sn, full_buffer);
+                              recv_datatype, sn);
                 if (status != UCS_OK) {
                     return status;
                 }
 
                 wait_recv_window(m_max_outstanding);
-                if (full_buffer &&
-                    (m_perf.params.command != UCX_PERF_CMD_PUT) &&
-                    memcmp(send_buffer, recv_buffer, send_length)) {
-                    ucs_error("mismatch between send and receive buffers");
-                    return UCS_ERR_IO_ERROR;
+                if (full_buffer) {
+                    status = validate_buffers(send_buffer, recv_buffer,
+                                              send_length);
+                    if (status != UCS_OK) {
+                        return status;
+                    }
                 }
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
@@ -809,7 +816,7 @@ public:
         } else if (my_index == 1) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
                 status = recv(worker, ep, recv_buffer, recv_length,
-                              recv_datatype, sn, full_buffer);
+                              recv_datatype, sn);
                 if (status != UCS_OK) {
                     return status;
                 }
@@ -876,8 +883,7 @@ public:
             UCX_PERF_TEST_FOREACH(&m_perf) {
                 send(ep, send_buffer, send_length, send_datatype, sn,
                      remote_addr, rkey);
-                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn,
-                     false);
+                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
@@ -886,8 +892,7 @@ public:
             wait_recv_window(m_max_outstanding);
         } else if (my_index == 0) {
             UCX_PERF_TEST_FOREACH(&m_perf) {
-                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn,
-                     false);
+                recv(worker, ep, recv_buffer, recv_length, recv_datatype, sn);
                 ucx_perf_update(&m_perf, 1, 1, length);
                 ++sn;
             }
