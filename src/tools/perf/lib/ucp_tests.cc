@@ -7,7 +7,6 @@
 * See file LICENSE for terms.
 */
 
-#include "ucs/type/status.h"
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
@@ -17,7 +16,9 @@
 
 #include <ucs/sys/preprocessor.h>
 #include <ucs/sys/string.h>
+#include "ucs/type/status.h"
 #include <limits>
+
 
 template <ucx_perf_cmd_t CMD, ucx_perf_test_type_t TYPE, unsigned FLAGS>
 class ucp_perf_test_runner : public ucp_perf_test_runner_base<uint8_t> {
@@ -430,11 +431,9 @@ public:
         return UCS_PTR_STATUS(req);
     }
 
-    ucs_status_t UCS_F_ALWAYS_INLINE send(ucp_ep_h ep, void *buffer,
-                                          size_t length,
-                                          ucp_datatype_t datatype, psn_t sn,
-                                          uint64_t remote_addr, ucp_rkey_h rkey,
-                                          bool get_info = false)
+    ucs_status_t UCS_F_ALWAYS_INLINE
+    send(ucp_ep_h ep, void *buffer, size_t length, ucp_datatype_t datatype,
+         psn_t sn, uint64_t remote_addr, ucp_rkey_h rkey, bool get_info = false)
     {
         ucp_request_param_t *param = get_info ? &m_send_get_info_params :
                                                 &m_send_params;
@@ -511,9 +510,9 @@ public:
         return status;
     }
 
-    ucs_status_t UCS_F_ALWAYS_INLINE recv(ucp_worker_h worker, ucp_ep_h ep,
-                                          void *buffer, size_t length,
-                                          ucp_datatype_t datatype, psn_t sn)
+    ucs_status_t UCS_F_ALWAYS_INLINE
+    recv(ucp_worker_h worker, ucp_ep_h ep, void *buffer, size_t length,
+         ucp_datatype_t datatype, psn_t sn)
     {
         void *request;
         void *ptr;
@@ -548,7 +547,7 @@ public:
                  * visible to non-volatile loads on the full buffer while the
                  * transfer is in flight. */
                 ptr = sn_ptr(buffer, length);
-                while (!read_sn(buffer, length)) {
+                while (read_sn(buffer, length) != sn) {
                     if (TYPE == UCX_PERF_TEST_TYPE_PINGPONG_WAIT_MEM) {
                         ucp_worker_wait_mem(worker, ptr);
                     }
@@ -590,7 +589,7 @@ public:
     void wait_last_iter(void *buffer, size_t size)
     {
         if (use_psn()) {
-            while (!read_sn(buffer, size)) {
+            while (read_sn(buffer, size) != LAST_ITER_SN) {
                 progress_responder();
             }
         }

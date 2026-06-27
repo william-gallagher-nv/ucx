@@ -4,14 +4,14 @@
 * See file LICENSE for terms.
 */
 
-#include "api/libperf.h"
-#include "ucs/memory/memory_type.h"
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
 
+#include "api/libperf.h"
 #include "perftest.h"
 
+#include "ucs/memory/memory_type.h"
 #include <ucs/sys/string.h>
 #include <ucs/sys/sys.h>
 #include <ucs/sys/sock.h>
