@@ -534,8 +534,7 @@ protected:
             }
         }
 
-        /*
-         * Range tests assume devices mlx5_0 .. mlx5_<max_idx>. This assumption
+         /* Range tests assume devices mlx5_0 .. mlx5_<max_idx>. This assumption
          * can break in virtualized environments with devices that may use any
          * idx. */
         if ((count > 0) && ((max_idx + 1) != count)) {
