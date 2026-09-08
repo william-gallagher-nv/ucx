@@ -537,8 +537,7 @@ protected:
         /*
          * Range tests assume devices mlx5_0 .. mlx5_<max_idx>. This assumption
          * can break in virtualized environments with devices that may use any
-         * idx.
-         */
+         * idx. */
         if ((count > 0) && ((max_idx + 1) != count)) {
             UCS_TEST_SKIP_R("mlx5 devices are not numbered from 0 to " +
                             std::to_string(max_idx));
