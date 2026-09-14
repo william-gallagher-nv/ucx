@@ -868,12 +868,13 @@ ucs_rcache_check_overlap(ucs_rcache_t *rcache, void *arg, ucs_pgt_addr_t *start,
         *start = ucs_align_down_pow2(*start, *alignment);
         *end   = ucs_align_up_pow2(*end, *alignment);
 
-        /* Overlapping regions might necessitate a larger alignment, which,
-         * in turn, can result in even more overlapping regions.
+        /* A merge may increase alignment and expose more overlapping or adjacent
+         * regions.
          */
         ucs_list_head_init(&region_list);
-        ucs_rcache_find_regions(rcache, *start, old_start - 1, &region_list);
-        ucs_rcache_find_regions(rcache, old_end, *end - 1, &region_list);
+        ucs_rcache_find_regions(rcache, *start - 1, old_start - 1,
+                                &region_list);
+        ucs_rcache_find_regions(rcache, old_end, *end, &region_list);
     } while (!ucs_list_is_empty(&region_list));
 
     return UCS_OK;

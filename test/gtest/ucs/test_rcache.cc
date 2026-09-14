@@ -5,6 +5,7 @@
  */
 
 #include <common/test.h>
+#include <cstdint>
 extern "C" {
 #include <ucs/arch/atomic.h>
 #include <ucs/sys/math.h>
@@ -405,6 +406,64 @@ UCS_MT_TEST_F(test_rcache, merge, 6) {
     put(region3);
 
     munmap(mem, size1 + pad + size2);
+}
+
+UCS_TEST_F(test_rcache, merge_adjacent)
+{
+    /*
+     * 0          4          8          12 pages
+     * +----------+----------+----------+
+     * | region1  | region3  | region2  |
+     * +----------+----------+----------+
+     *
+     * region3 is placed adjacent to region1 and region2, filling the gap.
+     * All regions are merged together.
+     */
+    static const size_t size       = 4 * ucs_get_page_size();
+    static const size_t total_size = 12 * ucs_get_page_size();
+    void *mem                      = NULL;
+
+    region *region1, *region2, *region3, *region1_2, *region2_2, *region3_2;
+    //region *region1, *region2, *region3;
+    void *ptr1, *ptr2, *ptr3;
+
+    EXPECT_EQ(posix_memalign(&mem, ucs_get_page_size(), total_size), 0);
+    memset(mem, 0, total_size);
+
+    /* Create region1 */
+    ptr1    = (char*)mem;
+    region1 = get(ptr1, size);
+
+    /* Create region2 */
+    ptr2    = (char*)mem + size * 2;
+    region2 = get(ptr2, size);
+
+    /* Create region3 which should merge region1 and region2 */
+    ptr3    = (char*)mem + size;
+    region3 = get(ptr3, size);
+
+    EXPECT_EQ(region3->super.super.start, (uintptr_t) mem);
+    EXPECT_EQ(region3->super.super.end, (uintptr_t) mem + total_size);
+
+    region1_2 = get(ptr1, size); 
+    EXPECT_NE(region1_2, region1);
+    EXPECT_EQ(region1_2, region3);
+
+    region2_2 = get(ptr2, size); 
+    EXPECT_NE(region2_2, region2);
+    EXPECT_EQ(region2_2, region3);
+
+    region3_2 = get(ptr3, size); 
+    EXPECT_EQ(region3_2, region3);
+
+    put(region1);
+    put(region2);
+    put(region3);
+    put(region1_2);
+    put(region2_2);
+    put(region3_2);
+
+    free(mem);
 }
 
 UCS_TEST_F(test_rcache, merge_aligned)
